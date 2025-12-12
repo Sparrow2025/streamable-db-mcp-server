@@ -141,7 +141,7 @@ impl McpServer {
         let mcp_get_route = warp::path("mcp")
             .and(warp::get())
             .and_then(move || {
-                let server = server_for_get.clone();
+                let _server = server_for_get.clone();
                 async move {
                     // Return server info for GET requests
                     let response = json!({
@@ -202,13 +202,57 @@ impl McpServer {
                 }
             });
 
+        // Health check endpoint for Docker
+        let server_for_health = server.clone();
+        let health_route = warp::path("health")
+            .and(warp::get())
+            .and_then(move || {
+                let server = server_for_health.clone();
+                async move {
+                    // Test database connection for health check
+                    match server.test_database_health().await {
+                        Ok(_) => {
+                            let response = json!({
+                                "status": "healthy",
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                                "service": "mysql-mcp-server",
+                                "version": "0.1.0"
+                            });
+                            Ok::<_, warp::Rejection>(warp::reply::with_status(
+                                warp::reply::json(&response),
+                                warp::http::StatusCode::OK
+                            ))
+                        }
+                        Err(e) => {
+                            error!("Health check failed: {}", e);
+                            let response = json!({
+                                "status": "unhealthy",
+                                "error": e.to_string(),
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                                "service": "mysql-mcp-server",
+                                "version": "0.1.0"
+                            });
+                            Ok::<_, warp::Rejection>(warp::reply::with_status(
+                                warp::reply::json(&response),
+                                warp::http::StatusCode::SERVICE_UNAVAILABLE
+                            ))
+                        }
+                    }
+                }
+            });
+
         let cors = warp::cors()
             .allow_any_origin()
             .allow_headers(vec!["content-type", "authorization", "x-requested-with", "accept"])
             .allow_methods(vec!["POST", "GET", "OPTIONS"])
             .expose_headers(vec!["content-type"]);
 
-        let routes = mcp_route.or(mcp_get_route).or(mcp_options).or(stream_route).with(cors);
+        let routes = mcp_route
+            .or(mcp_get_route)
+            .or(mcp_options)
+            .or(stream_route)
+            .or(health_route)
+            .with(cors);
 
         info!("MCP server listening on http://0.0.0.0:{}/mcp", port);
         info!("Streaming endpoint available at http://0.0.0.0:{}/stream/query", port);
@@ -587,6 +631,12 @@ impl McpServer {
             "status": "success",
             "message": "Database connection is healthy"
         }))
+    }
+
+    /// Test database health for health check endpoint
+    pub async fn test_database_health(&self) -> Result<()> {
+        let mut manager = self.connection_manager.lock().await;
+        manager.test_connection().await
     }
 
     /// Handle streaming query requests

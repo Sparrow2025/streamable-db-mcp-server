@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  mysql-mcp-server:
+    build: .
+    container_name: mysql-mcp-server
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info
+      - PORT=8080
+      # Database connection via environment variables
+      - DB_HOST=mysql-db
+      - DB_PORT=3306
+      - DB_USERNAME=mcp_user
+      - DB_PASSWORD=mcp_password
+      - DB_DATABASE=mcp_test
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  mysql-db:
+    image: mysql:8.0
+    container_name: mysql-mcp-db
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=mcp_test
+      - MYSQL_USER=mcp_user
+      - MYSQL_PASSWORD=mcp_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  mysql_data:

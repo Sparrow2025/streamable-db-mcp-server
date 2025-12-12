@@ -1,0 +1,98 @@
+name: Docker Build and Test
+
+on:
+  push:
+    branches: [ main, feature/docker-support ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  docker-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker images
+      run: |
+        docker build -t mysql-mcp-server:latest .
+        docker build -f Dockerfile.dev -t mysql-mcp-server:dev .
+    
+    - name: Start services
+      run: |
+        docker-compose up -d
+        
+    - name: Wait for services to be ready
+      run: |
+        echo "Waiting for services to start..."
+        sleep 30
+        
+        # Wait for MySQL to be ready
+        timeout 60 bash -c 'until docker exec mysql-mcp-db mysqladmin ping -h localhost -u root -proot_password --silent; do sleep 2; done'
+        
+        # Wait for MCP server to be ready
+        timeout 60 bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+    
+    - name: Run tests
+      run: |
+        # Test health endpoint
+        curl -f http://localhost:8080/health
+        
+        # Test MCP initialize
+        curl -X POST http://localhost:8080/mcp \
+          -H "Content-Type: application/json" \
+          -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+        
+        # Test tools list
+        curl -X POST http://localhost:8080/mcp \
+          -H "Content-Type: application/json" \
+          -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+        
+        # Test connection
+        curl -X POST http://localhost:8080/mcp \
+          -H "Content-Type: application/json" \
+          -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"test_connection","arguments":{}}}'
+        
+        # Test query execution
+        curl -X POST http://localhost:8080/mcp \
+          -H "Content-Type: application/json" \
+          -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute_query","arguments":{"sql":"SELECT COUNT(*) as user_count FROM users"}}}'
+    
+    - name: Check logs
+      if: failure()
+      run: |
+        echo "=== MCP Server Logs ==="
+        docker-compose logs mysql-mcp-server
+        echo "=== MySQL Logs ==="
+        docker-compose logs mysql-db
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        docker-compose down -v
+        docker system prune -f
+
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'mysql-mcp-server:latest'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'

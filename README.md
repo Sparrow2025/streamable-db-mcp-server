@@ -2,6 +2,52 @@
 
 A Streamable MySQL MCP (Model Context Protocol) server implementation in Rust that provides database connectivity and query execution capabilities.
 
+## Quick Start
+
+### 🐳 Docker Deployment (Recommended)
+
+The easiest way to get started is using Docker with the included MySQL database:
+
+```bash
+# Clone the repository
+git clone https://github.com/Sparrow2025/streamable-db-mcp-server.git
+cd streamable-db-mcp-server
+
+# Start with Docker (includes MySQL database)
+./docker/start.sh
+
+# Test the deployment
+./docker/test.sh
+```
+
+This will start both the MCP server and a MySQL database with sample data.
+
+**Available URLs:**
+- MCP Server: `http://localhost:8080/mcp`
+- Health Check: `http://localhost:8080/health`
+- MySQL Database: `localhost:3306` (user: `mcp_user`, password: `mcp_password`)
+
+For more Docker options, see the [Docker README](docker/README.md).
+
+### 🛠️ Local Development
+
+If you prefer to run locally without Docker:
+
+#### Prerequisites
+- Rust 1.70+
+- MySQL 5.7+ or MariaDB 10.3+
+
+#### Setup
+```bash
+# Copy configuration template
+cp config.example.toml config.toml
+
+# Edit config.toml with your database credentials
+# Then build and run
+cargo build --release
+cargo run
+```
+
 ## Configuration
 
 The server supports configuration through TOML files with fallback to environment variables. The new configuration format separates database connection details into individual fields for better clarity and security.
