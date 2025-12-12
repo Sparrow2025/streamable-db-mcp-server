@@ -1,0 +1,26 @@
+# MySQL MCP Server Configuration
+
+[server]
+# Server listening port
+port = 8080
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+
+[database]
+# Database connection details
+host = "localhost"
+port = 3306
+username = "your_username"
+password = "your_password"
+database = "your_database"
+# Connection timeout in seconds
+connection_timeout = 30
+# Maximum number of connections in the pool
+max_connections = 10
+
+[mcp]
+# MCP protocol version
+protocol_version = "2024-11-05"
+# Server name and version info
+server_name = "mysql-mcp-server"
+server_version = "0.1.0"

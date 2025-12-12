@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 56911e542723170530b6d267d31aaeffa2f95e7b0f6882a41d2d47343c87927f # shrinks to query_result = QueryResult { columns: [], rows: [Row { values: [Number(1.0188491292309046e-224)] }], affected_rows: None, execution_time_ms: 0 }

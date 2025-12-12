@@ -1,0 +1,66 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Environment variables and configuration
+.env
+.env.local
+.env.production
+.env.test
+config.toml
+*.toml
+!config.example.toml
+!Cargo.toml
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Build artifacts
+dist/
+build/
+
+# Test artifacts
+test-results/
+coverage/
+
+# Kiro IDE specific
+.kiro/settings/
+.kiro/cache/
+
+# MCP server specific
+mcp-server.log
+database.log
+
+# Backup files
+*.bak
+*.backup
