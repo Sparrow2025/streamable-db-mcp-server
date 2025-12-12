@@ -19,7 +19,6 @@ Thumbs.db
 
 # Rust
 target/
-Cargo.lock
 
 # Configuration (sensitive)
 config.toml
