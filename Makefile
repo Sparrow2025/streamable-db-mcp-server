@@ -1,6 +1,6 @@
 # Makefile for MySQL MCP Server
 
-.PHONY: help build test clean docker-build docker-start docker-test docker-clean docker-dev
+.PHONY: help build test clean docker-build docker-start docker-test docker-clean docker-dev real-start real-test real-clean real-logs
 
 # Default target
 help:
@@ -19,6 +19,12 @@ help:
 	@echo "  docker-test    Test Docker deployment"
 	@echo "  docker-clean   Clean up Docker resources"
 	@echo "  docker-logs    View Docker logs"
+	@echo ""
+	@echo "Real Environment (AWS RDS Aurora):"
+	@echo "  real-start     Start with real AWS RDS database"
+	@echo "  real-test      Test real environment deployment"
+	@echo "  real-clean     Clean up real environment"
+	@echo "  real-logs      View real environment logs"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  verify         Verify setup and security"
@@ -62,6 +68,22 @@ docker-logs:
 
 docker-logs-dev:
 	docker-compose -f docker-compose.dev.yml logs -f
+
+# Real environment commands (AWS RDS Aurora)
+real-start:
+	./docker/start-real.sh
+
+real-test:
+	./docker/test-real.sh
+
+real-clean:
+	./docker/cleanup-real.sh
+
+real-clean-all:
+	./docker/cleanup-real.sh --full
+
+real-logs:
+	docker-compose -f docker-compose.real.yml logs -f
 
 # Utilities
 verify:

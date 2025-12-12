@@ -73,3 +73,5 @@ database.log
 # Docker
 .docker/
 docker-compose.override.yml
+docker-compose.real.yml
+docker-compose.production.yml
