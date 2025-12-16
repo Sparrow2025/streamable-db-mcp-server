@@ -1,13 +1,21 @@
 # MySQL MCP Server
 
-A Streamable MySQL MCP (Model Context Protocol) server implementation in Rust that provides database connectivity and query execution capabilities.
+A powerful, streamable MySQL MCP (Model Context Protocol) server implementation in Rust with comprehensive **multi-environment support**. Connect to multiple database environments (dev, staging, prod) simultaneously and perform cross-environment operations seamlessly.
+
+## ✨ Key Features
+
+- 🌍 **Multi-Environment Support**: Connect to multiple databases simultaneously
+- 🔄 **Cross-Environment Queries**: Compare data across dev, staging, and production
+- 🛡️ **Graceful Startup**: Server starts even if some environments are unavailable
+- 📊 **Health Monitoring**: Comprehensive monitoring for all database environments
+- 🔧 **Enhanced MCP Tools**: Environment-aware tools with backward compatibility
+- 🚀 **Streaming Support**: Handle large result sets across multiple environments
 
 ## Quick Start
 
 ### 🐳 Docker Deployment (Recommended)
 
-The easiest way to get started is using Docker with the included MySQL database:
-
+#### Single Environment (Legacy)
 ```bash
 # Clone the repository
 git clone https://github.com/Sparrow2025/streamable-db-mcp-server.git
@@ -20,24 +28,34 @@ cd streamable-db-mcp-server
 ./docker/test.sh
 ```
 
-This will start both the MCP server and a MySQL database with sample data.
+#### Multi-Environment Setup
+```bash
+# Start multi-environment setup with dev and staging databases
+./docker/start-multi-env.sh
+
+# Include production test environment
+./docker/start-multi-env.sh --with-prod-test
+
+# Run in detached mode
+./docker/start-multi-env.sh --detached
+```
 
 **Available URLs:**
 - MCP Server: `http://localhost:8080/mcp`
 - Health Check: `http://localhost:8080/health`
-- MySQL Database: `localhost:3306` (user: `mcp_user`, password: `mcp_password`)
+- Dev MySQL: `localhost:3306`
+- Staging MySQL: `localhost:3307`
+- Prod Test MySQL: `localhost:3308` (when using `--with-prod-test`)
 
-For more Docker options, see the [Docker README](docker/README.md).
+For more Docker options, see the [Docker README](docker/README.md) and [Multi-Environment Docker Setup](docker/README-MULTI-ENV.md).
 
 ### 🛠️ Local Development
-
-If you prefer to run locally without Docker:
 
 #### Prerequisites
 - Rust 1.70+
 - MySQL 5.7+ or MariaDB 10.3+
 
-#### Setup
+#### Single Environment Setup
 ```bash
 # Copy configuration template
 cp config.example.toml config.toml
@@ -48,36 +66,102 @@ cargo build --release
 cargo run
 ```
 
+#### Multi-Environment Setup
+```bash
+# Copy multi-environment configuration template
+cp config.multi-env.example.toml config.toml
+
+# Edit config.toml with your database environments
+# Then build and run
+cargo build --release
+cargo run
+```
+
 ## Configuration
 
-The server supports configuration through TOML files with fallback to environment variables. The new configuration format separates database connection details into individual fields for better clarity and security.
+The server supports both **single-database** (legacy) and **multi-environment** configurations through TOML files with fallback to environment variables.
 
-### Configuration File
+### Single Environment Configuration (Legacy)
 
 Create a `config.toml` file in the project root:
 
 ```toml
 [server]
-# Server listening port
 port = 8080
-# Log level: trace, debug, info, warn, error
 log_level = "info"
 
 [database]
-# Database connection details
-host = "localhost"          # Database host
-port = 3306                 # Database port (optional, default: 3306)
-username = "root"           # Database username
-password = "password"       # Database password
-database = "myapp"          # Database name
-# Connection timeout in seconds (optional, default: 30)
+host = "localhost"
+port = 3306
+username = "root"
+password = "password"
+database = "myapp"
 connection_timeout = 30
-# Maximum number of connections in the pool (optional, default: 10)
 max_connections = 10
 
 [mcp]
-# MCP protocol version
 protocol_version = "2024-11-05"
+server_name = "mysql-mcp-server"
+server_version = "0.1.0"
+```
+
+### Multi-Environment Configuration (Recommended)
+
+For production deployments, use the multi-environment configuration:
+
+```toml
+# Default environment when none specified
+default_environment = "dev"
+
+[server]
+port = 8080
+log_level = "info"
+
+[mcp]
+protocol_version = "2024-11-05"
+server_name = "mysql-mcp-server"
+server_version = "0.1.0"
+
+# Development Environment
+[environments.dev]
+name = "dev"
+description = "Development environment"
+enabled = true
+
+[environments.dev.database]
+host = "localhost"
+port = 3306
+username = "dev_user"
+password = "dev_password"
+database = "dev_db"
+
+[environments.dev.connection_pool]
+max_connections = 5
+min_connections = 1
+connection_timeout = 30
+idle_timeout = 600
+
+# Production Environment
+[environments.prod]
+name = "prod"
+description = "Production environment"
+enabled = true
+
+[environments.prod.database]
+host = "prod-db.company.com"
+port = 3306
+username = "prod_user"
+password = "prod_password"
+database = "prod_db"
+
+[environments.prod.connection_pool]
+max_connections = 20
+min_connections = 5
+connection_timeout = 30
+idle_timeout = 600
+```
+
+📚 **[Complete Configuration Guide](docs/README.md)** | **[Migration Guide](docs/MIGRATION_GUIDE.md)**
 # Server identification
 server_name = "mysql-mcp-server"
 server_version = "0.1.0"

@@ -1,0 +1,73 @@
+# Docker Compose for Development Environment Only
+# This setup creates a single development environment for local development
+
+version: '3.8'
+
+services:
+  # MySQL MCP Server
+  mysql-mcp-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    container_name: mysql-mcp-server-dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../config.multi-env.example.toml:/app/config.toml:ro
+      - ..:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+    environment:
+      - RUST_LOG=debug
+      - PORT=8080
+      - MCP_DEFAULT_ENVIRONMENT=dev
+      - MCP_LOG_LEVEL=debug
+    depends_on:
+      mysql-dev:
+        condition: service_healthy
+    networks:
+      - mcp-dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Development MySQL Database
+  mysql-dev:
+    image: mysql:8.0
+    container_name: mysql-mcp-dev
+    environment:
+      MYSQL_ROOT_PASSWORD: dev_root_password
+      MYSQL_DATABASE: dev_database
+      MYSQL_USER: dev_user
+      MYSQL_PASSWORD: dev_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_dev_data:/var/lib/mysql
+      - ./mysql/init-dev.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - mcp-dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pdev_root_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mysql_dev_data:
+    driver: local
+  cargo_cache:
+    driver: local
+  target_cache:
+    driver: local
+
+networks:
+  mcp-dev-network:
+    driver: bridge
+    name: mcp-dev-network

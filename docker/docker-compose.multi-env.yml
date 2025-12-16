@@ -1,0 +1,122 @@
+# Docker Compose for Multi-Environment MySQL MCP Server
+# This setup demonstrates running the MCP server with multiple database environments
+
+version: '3.8'
+
+services:
+  # MySQL MCP Server
+  mysql-mcp-server:
+    build: 
+      context: ..
+      dockerfile: Dockerfile
+    container_name: mysql-mcp-server-multi
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.multi-env.docker.toml:/app/config.toml:ro
+    environment:
+      - RUST_LOG=${MCP_LOG_LEVEL:-info}
+      - PORT=8080
+      - MCP_DEFAULT_ENVIRONMENT=${MCP_DEFAULT_ENVIRONMENT:-dev}
+      - MCP_SERVER_PORT=${MCP_SERVER_PORT:-8080}
+      - MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-info}
+    depends_on:
+      mysql-dev:
+        condition: service_healthy
+      mysql-staging:
+        condition: service_healthy
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Development MySQL Database
+  mysql-dev:
+    image: mysql:8.0
+    container_name: mysql-mcp-dev-multi
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DEV_MYSQL_ROOT_PASSWORD:-dev_root_password}
+      MYSQL_DATABASE: ${DEV_MYSQL_DATABASE:-dev_database}
+      MYSQL_USER: ${DEV_MYSQL_USER:-dev_user}
+      MYSQL_PASSWORD: ${DEV_MYSQL_PASSWORD:-dev_password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_dev_data:/var/lib/mysql
+      - ./mysql/init-dev.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DEV_MYSQL_ROOT_PASSWORD:-dev_root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Staging MySQL Database
+  mysql-staging:
+    image: mysql:8.0
+    container_name: mysql-mcp-staging-multi
+    environment:
+      MYSQL_ROOT_PASSWORD: ${STAGING_MYSQL_ROOT_PASSWORD:-staging_root_password}
+      MYSQL_DATABASE: ${STAGING_MYSQL_DATABASE:-staging_database}
+      MYSQL_USER: ${STAGING_MYSQL_USER:-staging_user}
+      MYSQL_PASSWORD: ${STAGING_MYSQL_PASSWORD:-staging_password}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_staging_data:/var/lib/mysql
+      - ./mysql/init-staging.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${STAGING_MYSQL_ROOT_PASSWORD:-staging_root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Production-like MySQL Database (for testing)
+  mysql-prod-test:
+    image: mysql:8.0
+    container_name: mysql-mcp-prod-test-multi
+    environment:
+      MYSQL_ROOT_PASSWORD: ${PROD_TEST_MYSQL_ROOT_PASSWORD:-prod_test_root_password}
+      MYSQL_DATABASE: ${PROD_TEST_MYSQL_DATABASE:-prod_database}
+      MYSQL_USER: ${PROD_TEST_MYSQL_USER:-prod_user}
+      MYSQL_PASSWORD: ${PROD_TEST_MYSQL_PASSWORD:-prod_password}
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_prod_test_data:/var/lib/mysql
+      - ./mysql/init-prod.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${PROD_TEST_MYSQL_ROOT_PASSWORD:-prod_test_root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - prod-test  # Only start with --profile prod-test
+
+volumes:
+  mysql_dev_data:
+    driver: local
+  mysql_staging_data:
+    driver: local
+  mysql_prod_test_data:
+    driver: local
+
+networks:
+  mcp-network:
+    driver: bridge

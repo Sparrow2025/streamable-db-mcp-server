@@ -1,6 +1,7 @@
 //! Configuration structures for the MySQL MCP server
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use crate::{Result, ServerError};
@@ -9,7 +10,12 @@ use crate::{Result, ServerError};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     pub server: ServerConfig,
-    pub database: DatabaseConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<DatabaseConfig>, // Legacy single database config
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environments: Option<HashMap<String, EnvironmentConfig>>, // New multi-environment config
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_environment: Option<String>, // Default environment name
     pub mcp: McpConfig,
 }
 
@@ -44,6 +50,39 @@ pub struct DatabaseConfig {
     pub max_connections: u32,
 }
 
+/// Environment configuration for multi-database support
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EnvironmentConfig {
+    /// Environment name (e.g., "dev", "sit", "uat", "prod")
+    pub name: String,
+    /// Optional description of the environment
+    pub description: Option<String>,
+    /// Database connection configuration
+    pub database: DatabaseConfig,
+    /// Connection pool configuration
+    pub connection_pool: PoolConfig,
+    /// Whether this environment is enabled
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+/// Connection pool configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PoolConfig {
+    /// Maximum number of connections in the pool
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
+    /// Minimum number of connections to maintain
+    #[serde(default = "default_min_connections")]
+    pub min_connections: u32,
+    /// Connection timeout in seconds
+    #[serde(default = "default_connection_timeout")]
+    pub connection_timeout: u64,
+    /// Idle timeout in seconds (how long to keep idle connections)
+    #[serde(default = "default_idle_timeout")]
+    pub idle_timeout: u64,
+}
+
 impl DatabaseConfig {
     /// Build MySQL connection URL from individual components
     pub fn build_connection_url(&self) -> String {
@@ -66,6 +105,150 @@ impl DatabaseConfig {
             self.port,
             self.database
         )
+    }
+
+    /// Validate the database configuration
+    pub fn validate(&self) -> Result<()> {
+        if self.host.is_empty() {
+            return Err(ServerError::validation_error(
+                "Database host cannot be empty".to_string(),
+                Some("Provide a valid hostname or IP address".to_string())
+            ));
+        }
+
+        if self.username.is_empty() {
+            return Err(ServerError::validation_error(
+                "Database username cannot be empty".to_string(),
+                Some("Provide a valid database username".to_string())
+            ));
+        }
+
+        if self.database.is_empty() {
+            return Err(ServerError::validation_error(
+                "Database name cannot be empty".to_string(),
+                Some("Provide a valid database name".to_string())
+            ));
+        }
+
+        if self.port == 0 {
+            return Err(ServerError::validation_error(
+                "Database port cannot be 0".to_string(),
+                Some("Use a port number between 1 and 65535".to_string())
+            ));
+        }
+
+        if self.connection_timeout == 0 {
+            return Err(ServerError::validation_error(
+                "Connection timeout cannot be 0".to_string(),
+                Some("Set connection_timeout to a positive number of seconds".to_string())
+            ));
+        }
+
+        if self.max_connections == 0 {
+            return Err(ServerError::validation_error(
+                "Max connections cannot be 0".to_string(),
+                Some("Set max_connections to a positive number".to_string())
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+impl EnvironmentConfig {
+    /// Create a new environment configuration
+    pub fn new(name: String, database: DatabaseConfig) -> Self {
+        Self {
+            name: name.clone(),
+            description: None,
+            database,
+            connection_pool: PoolConfig::default(),
+            enabled: true,
+        }
+    }
+
+    /// Validate the environment configuration
+    pub fn validate(&self) -> Result<()> {
+        // Validate environment name
+        if self.name.is_empty() {
+            return Err(ServerError::validation_error(
+                "Environment name cannot be empty".to_string(),
+                Some("Provide a valid environment name (e.g., 'dev', 'sit', 'uat', 'prod')".to_string())
+            ));
+        }
+
+        // Validate environment name format (alphanumeric, hyphens, underscores only)
+        if !self.name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+            return Err(ServerError::validation_error(
+                format!("Invalid environment name '{}': only alphanumeric characters, hyphens, and underscores are allowed", self.name),
+                Some("Use names like 'dev', 'sit-1', 'uat_env', etc.".to_string())
+            ));
+        }
+
+        // Validate database configuration
+        self.database.validate()?;
+
+        // Validate connection pool configuration
+        self.connection_pool.validate(&self.name)?;
+
+        Ok(())
+    }
+
+    /// Get the connection URL for this environment
+    pub fn connection_url(&self) -> String {
+        self.database.build_connection_url()
+    }
+
+    /// Get the masked connection URL for logging
+    pub fn masked_connection_url(&self) -> String {
+        self.database.masked_connection_url()
+    }
+}
+
+impl PoolConfig {
+    /// Validate the pool configuration
+    pub fn validate(&self, env_name: &str) -> Result<()> {
+        if self.max_connections == 0 {
+            return Err(ServerError::validation_error(
+                format!("Environment '{}': max_connections cannot be 0", env_name),
+                Some("Set max_connections to a positive number".to_string())
+            ));
+        }
+
+        if self.min_connections > self.max_connections {
+            return Err(ServerError::validation_error(
+                format!("Environment '{}': min_connections ({}) cannot be greater than max_connections ({})", 
+                    env_name, self.min_connections, self.max_connections),
+                Some("Ensure min_connections <= max_connections".to_string())
+            ));
+        }
+
+        if self.connection_timeout == 0 {
+            return Err(ServerError::validation_error(
+                format!("Environment '{}': connection_timeout cannot be 0", env_name),
+                Some("Set connection_timeout to a positive number of seconds".to_string())
+            ));
+        }
+
+        if self.idle_timeout == 0 {
+            return Err(ServerError::validation_error(
+                format!("Environment '{}': idle_timeout cannot be 0", env_name),
+                Some("Set idle_timeout to a positive number of seconds".to_string())
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: default_max_connections(),
+            min_connections: default_min_connections(),
+            connection_timeout: default_connection_timeout(),
+            idle_timeout: default_idle_timeout(),
+        }
     }
 }
 
@@ -189,7 +372,9 @@ impl Config {
                 port,
                 log_level,
             },
-            database: database_config,
+            database: Some(database_config),
+            environments: None,
+            default_environment: None,
             mcp: McpConfig {
                 protocol_version: "2024-11-05".to_string(),
                 server_name: "mysql-mcp-server".to_string(),
@@ -276,37 +461,7 @@ impl Config {
 
     /// Validate the configuration
     pub fn validate(&self) -> Result<()> {
-        // Validate database configuration
-        if self.database.host.is_empty() {
-            return Err(ServerError::validation_error(
-                "Database host cannot be empty".to_string(),
-                None
-            ));
-        }
-
-        if self.database.username.is_empty() {
-            return Err(ServerError::validation_error(
-                "Database username cannot be empty".to_string(),
-                None
-            ));
-        }
-
-        if self.database.database.is_empty() {
-            return Err(ServerError::validation_error(
-                "Database name cannot be empty".to_string(),
-                None
-            ));
-        }
-
-        // Validate database port
-        if self.database.port == 0 {
-            return Err(ServerError::validation_error(
-                "Database port cannot be 0".to_string(),
-                Some("Use a port number between 1 and 65535".to_string())
-            ));
-        }
-
-        // Validate server port
+        // Validate server configuration
         if self.server.port == 0 {
             return Err(ServerError::validation_error(
                 "Server port cannot be 0".to_string(),
@@ -325,19 +480,63 @@ impl Config {
             }
         }
 
-        // Validate connection settings
-        if self.database.connection_timeout == 0 {
-            return Err(ServerError::validation_error(
-                "Connection timeout cannot be 0".to_string(),
-                None
-            ));
-        }
+        // Validate database configuration (legacy or multi-environment)
+        match (&self.database, &self.environments) {
+            (Some(db_config), None) => {
+                // Legacy single database configuration
+                db_config.validate()?;
+            },
+            (None, Some(environments)) => {
+                // Multi-environment configuration
+                if environments.is_empty() {
+                    return Err(ServerError::validation_error(
+                        "No environments configured".to_string(),
+                        Some("Configure at least one environment in the [environments] section".to_string())
+                    ));
+                }
 
-        if self.database.max_connections == 0 {
-            return Err(ServerError::validation_error(
-                "Max connections cannot be 0".to_string(),
-                None
-            ));
+                // Validate each environment
+                for (env_name, env_config) in environments {
+                    if env_name != &env_config.name {
+                        return Err(ServerError::validation_error(
+                            format!("Environment key '{}' does not match environment name '{}'", env_name, env_config.name),
+                            Some("Ensure environment keys match their name fields".to_string())
+                        ));
+                    }
+                    env_config.validate()?;
+                }
+
+                // Validate default environment if specified
+                if let Some(default_env) = &self.default_environment {
+                    if !environments.contains_key(default_env) {
+                        return Err(ServerError::validation_error(
+                            format!("Default environment '{}' is not configured", default_env),
+                            Some(format!("Available environments: {}", environments.keys().cloned().collect::<Vec<_>>().join(", ")))
+                        ));
+                    }
+                }
+
+                // Check that at least one environment is enabled
+                let enabled_count = environments.values().filter(|env| env.enabled).count();
+                if enabled_count == 0 {
+                    return Err(ServerError::validation_error(
+                        "No environments are enabled".to_string(),
+                        Some("Enable at least one environment by setting enabled = true".to_string())
+                    ));
+                }
+            },
+            (Some(_), Some(_)) => {
+                return Err(ServerError::validation_error(
+                    "Cannot specify both legacy 'database' and new 'environments' configuration".to_string(),
+                    Some("Use either the legacy [database] section or the new [environments] section, not both".to_string())
+                ));
+            },
+            (None, None) => {
+                return Err(ServerError::validation_error(
+                    "No database configuration found".to_string(),
+                    Some("Configure either a [database] section (legacy) or [environments] section (multi-environment)".to_string())
+                ));
+            }
         }
 
         Ok(())
@@ -345,9 +544,72 @@ impl Config {
 
     /// Convert to legacy ConnectionConfig for backward compatibility
     pub fn to_connection_config(&self) -> ConnectionConfig {
-        ConnectionConfig {
-            database_url: self.database.build_connection_url(),
+        match &self.database {
+            Some(db_config) => ConnectionConfig {
+                database_url: db_config.build_connection_url(),
+            },
+            None => {
+                // If using multi-environment, try to use default environment or first available
+                if let Some(environments) = &self.environments {
+                    let env_config = if let Some(default_env) = &self.default_environment {
+                        environments.get(default_env)
+                    } else {
+                        environments.values().find(|env| env.enabled)
+                    };
+                    
+                    if let Some(env) = env_config {
+                        ConnectionConfig {
+                            database_url: env.database.build_connection_url(),
+                        }
+                    } else {
+                        panic!("No valid database configuration found for legacy compatibility")
+                    }
+                } else {
+                    panic!("No database configuration found for legacy compatibility")
+                }
+            }
         }
+    }
+
+    /// Check if this is a multi-environment configuration
+    pub fn is_multi_environment(&self) -> bool {
+        self.environments.is_some()
+    }
+
+    /// Get all configured environments
+    pub fn get_environments(&self) -> Option<&HashMap<String, EnvironmentConfig>> {
+        self.environments.as_ref()
+    }
+
+    /// Get a specific environment configuration
+    pub fn get_environment(&self, name: &str) -> Option<&EnvironmentConfig> {
+        self.environments.as_ref()?.get(name)
+    }
+
+    /// Get the default environment name
+    pub fn get_default_environment(&self) -> Option<&str> {
+        self.default_environment.as_deref()
+    }
+
+    /// Get all enabled environment names
+    pub fn get_enabled_environments(&self) -> Vec<String> {
+        match &self.environments {
+            Some(environments) => {
+                environments.values()
+                    .filter(|env| env.enabled)
+                    .map(|env| env.name.clone())
+                    .collect()
+            },
+            None => {
+                // Legacy single database mode
+                vec!["default".to_string()]
+            }
+        }
+    }
+
+    /// Get the legacy database configuration (for backward compatibility)
+    pub fn get_legacy_database(&self) -> Option<&DatabaseConfig> {
+        self.database.as_ref()
     }
 }
 
@@ -362,6 +624,18 @@ fn default_connection_timeout() -> u64 {
 
 fn default_max_connections() -> u32 {
     10
+}
+
+fn default_min_connections() -> u32 {
+    1
+}
+
+fn default_idle_timeout() -> u64 {
+    600 // 10 minutes
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -473,20 +747,22 @@ server_version = "0.1.0"
         
         assert_eq!(config.server.port, 9999);
         assert_eq!(config.server.log_level, "debug");
-        assert_eq!(config.database.host, "testhost");
-        assert_eq!(config.database.port, 3307);
-        assert_eq!(config.database.username, "testuser");
-        assert_eq!(config.database.password, "testpass");
-        assert_eq!(config.database.database, "testdb");
-        assert_eq!(config.database.connection_timeout, 60);
-        assert_eq!(config.database.max_connections, 20);
+        assert!(config.database.is_some());
+        let db_config = config.database.as_ref().unwrap();
+        assert_eq!(db_config.host, "testhost");
+        assert_eq!(db_config.port, 3307);
+        assert_eq!(db_config.username, "testuser");
+        assert_eq!(db_config.password, "testpass");
+        assert_eq!(db_config.database, "testdb");
+        assert_eq!(db_config.connection_timeout, 60);
+        assert_eq!(db_config.max_connections, 20);
 
         // Test connection URL building
-        let connection_url = config.database.build_connection_url();
+        let connection_url = db_config.build_connection_url();
         assert_eq!(connection_url, "mysql://testuser:testpass@testhost:3307/testdb");
 
         // Test masked URL
-        let masked_url = config.database.masked_connection_url();
+        let masked_url = db_config.masked_connection_url();
         assert_eq!(masked_url, "mysql://testuser:****@testhost:3307/testdb");
 
         // Clean up
@@ -500,26 +776,294 @@ server_version = "0.1.0"
             let config = Config::from_file("config.toml").unwrap();
             
             // Validate that the config is properly structured
-            assert!(!config.database.host.is_empty());
-            assert!(!config.database.username.is_empty());
-            assert!(!config.database.database.is_empty());
-            assert!(config.database.port > 0);
-            assert!(config.server.port > 0);
+            if let Some(db_config) = &config.database {
+                assert!(!db_config.host.is_empty());
+                assert!(!db_config.username.is_empty());
+                assert!(!db_config.database.is_empty());
+                assert!(db_config.port > 0);
+                assert!(config.server.port > 0);
+                
+                // Test that connection URL can be built
+                let connection_url = db_config.build_connection_url();
+                assert!(connection_url.starts_with("mysql://"));
+                
+                // Test that masked URL doesn't contain password
+                let masked_url = db_config.masked_connection_url();
+                assert!(masked_url.contains("****"));
+                assert!(!masked_url.contains(&db_config.password));
+                
+                println!("Current config validation passed!");
+                println!("Host: {}", db_config.host);
+                println!("Username: {}", db_config.username);
+                println!("Database: {}", db_config.database);
+                println!("Masked URL: {}", masked_url);
+            }
+        }
+    }
+
+    #[test]
+    fn test_multi_environment_config() {
+        // Create a multi-environment config file
+        let config_content = r#"
+default_environment = "dev"
+
+[server]
+port = 8080
+log_level = "info"
+
+[environments.dev]
+name = "dev"
+description = "Development environment"
+enabled = true
+
+[environments.dev.database]
+host = "dev-db.example.com"
+port = 3306
+username = "dev_user"
+password = "dev_pass"
+database = "dev_db"
+connection_timeout = 30
+
+[environments.dev.connection_pool]
+max_connections = 5
+min_connections = 1
+connection_timeout = 30
+idle_timeout = 300
+
+[environments.uat]
+name = "uat"
+description = "User Acceptance Testing environment"
+enabled = true
+
+[environments.uat.database]
+host = "uat-db.example.com"
+port = 3306
+username = "uat_user"
+password = "uat_pass"
+database = "uat_db"
+connection_timeout = 30
+
+[environments.uat.connection_pool]
+max_connections = 10
+min_connections = 2
+connection_timeout = 30
+idle_timeout = 600
+
+[mcp]
+protocol_version = "2024-11-05"
+server_name = "mysql-mcp-server"
+server_version = "0.1.0"
+"#;
+
+        // Write to a temporary file
+        use std::io::Write;
+        let mut temp_file = std::fs::File::create("test_multi_env_config.toml").unwrap();
+        temp_file.write_all(config_content.as_bytes()).unwrap();
+        drop(temp_file);
+
+        // Load and validate config
+        let config = Config::from_file("test_multi_env_config.toml").unwrap();
+        
+        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.server.log_level, "info");
+        assert!(config.is_multi_environment());
+        assert_eq!(config.get_default_environment(), Some("dev"));
+        
+        // Test environments
+        let environments = config.get_environments().unwrap();
+        assert_eq!(environments.len(), 2);
+        
+        // Test dev environment
+        let dev_env = config.get_environment("dev").unwrap();
+        assert_eq!(dev_env.name, "dev");
+        assert_eq!(dev_env.description, Some("Development environment".to_string()));
+        assert!(dev_env.enabled);
+        assert_eq!(dev_env.database.host, "dev-db.example.com");
+        assert_eq!(dev_env.database.username, "dev_user");
+        assert_eq!(dev_env.connection_pool.max_connections, 5);
+        assert_eq!(dev_env.connection_pool.min_connections, 1);
+        
+        // Test UAT environment
+        let uat_env = config.get_environment("uat").unwrap();
+        assert_eq!(uat_env.name, "uat");
+        assert_eq!(uat_env.description, Some("User Acceptance Testing environment".to_string()));
+        assert!(uat_env.enabled);
+        assert_eq!(uat_env.database.host, "uat-db.example.com");
+        assert_eq!(uat_env.database.username, "uat_user");
+        assert_eq!(uat_env.connection_pool.max_connections, 10);
+        assert_eq!(uat_env.connection_pool.min_connections, 2);
+        
+        // Test enabled environments
+        let enabled_envs = config.get_enabled_environments();
+        assert_eq!(enabled_envs.len(), 2);
+        assert!(enabled_envs.contains(&"dev".to_string()));
+        assert!(enabled_envs.contains(&"uat".to_string()));
+        
+        // Test connection URLs
+        let dev_url = dev_env.connection_url();
+        assert_eq!(dev_url, "mysql://dev_user:dev_pass@dev-db.example.com:3306/dev_db");
+        
+        let dev_masked_url = dev_env.masked_connection_url();
+        assert_eq!(dev_masked_url, "mysql://dev_user:****@dev-db.example.com:3306/dev_db");
+        assert!(!dev_masked_url.contains("dev_pass"));
+
+        // Clean up
+        std::fs::remove_file("test_multi_env_config.toml").ok();
+    }
+
+    #[test]
+    fn test_environment_config_validation() {
+        // Test invalid environment name
+        let mut env_config = EnvironmentConfig::new(
+            "".to_string(),
+            DatabaseConfig {
+                host: "localhost".to_string(),
+                port: 3306,
+                username: "user".to_string(),
+                password: "pass".to_string(),
+                database: "db".to_string(),
+                connection_timeout: 30,
+                max_connections: 10,
+            }
+        );
+        assert!(env_config.validate().is_err());
+
+        // Test invalid environment name with special characters
+        env_config.name = "dev@env".to_string();
+        assert!(env_config.validate().is_err());
+
+        // Test valid environment name
+        env_config.name = "dev-env_1".to_string();
+        assert!(env_config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_pool_config_validation() {
+        let pool_config = PoolConfig {
+            max_connections: 0,
+            min_connections: 1,
+            connection_timeout: 30,
+            idle_timeout: 600,
+        };
+        assert!(pool_config.validate("test").is_err());
+
+        let pool_config = PoolConfig {
+            max_connections: 5,
+            min_connections: 10, // min > max
+            connection_timeout: 30,
+            idle_timeout: 600,
+        };
+        assert!(pool_config.validate("test").is_err());
+
+        let pool_config = PoolConfig {
+            max_connections: 10,
+            min_connections: 5,
+            connection_timeout: 0, // invalid timeout
+            idle_timeout: 600,
+        };
+        assert!(pool_config.validate("test").is_err());
+
+        let pool_config = PoolConfig {
+            max_connections: 10,
+            min_connections: 5,
+            connection_timeout: 30,
+            idle_timeout: 600,
+        };
+        assert!(pool_config.validate("test").is_ok());
+    }
+
+    #[test]
+    fn test_config_validation_errors() {
+        // Test config with both legacy and multi-environment
+        let config_content = r#"
+[server]
+port = 8080
+log_level = "info"
+
+[database]
+host = "localhost"
+port = 3306
+username = "user"
+password = "pass"
+database = "db"
+
+[environments.dev]
+name = "dev"
+enabled = true
+
+[environments.dev.database]
+host = "dev-db.example.com"
+port = 3306
+username = "dev_user"
+password = "dev_pass"
+database = "dev_db"
+
+[mcp]
+protocol_version = "2024-11-05"
+server_name = "mysql-mcp-server"
+server_version = "0.1.0"
+"#;
+
+        use std::io::Write;
+        let mut temp_file = std::fs::File::create("test_invalid_config.toml").unwrap();
+        temp_file.write_all(config_content.as_bytes()).unwrap();
+        drop(temp_file);
+
+        // This should fail validation
+        let result = Config::from_file("test_invalid_config.toml");
+        assert!(result.is_err());
+
+        // Clean up
+        std::fs::remove_file("test_invalid_config.toml").ok();
+    }
+
+    #[test]
+    fn test_example_multi_env_config_validation() {
+        // Test the actual example multi-environment config file
+        if std::path::Path::new("config.multi-env.example.toml").exists() {
+            let config = Config::from_file("config.multi-env.example.toml").unwrap();
             
-            // Test that connection URL can be built
-            let connection_url = config.database.build_connection_url();
-            assert!(connection_url.starts_with("mysql://"));
+            // Validate it's multi-environment
+            assert!(config.is_multi_environment());
             
-            // Test that masked URL doesn't contain password
-            let masked_url = config.database.masked_connection_url();
-            assert!(masked_url.contains("****"));
-            assert!(!masked_url.contains(&config.database.password));
+            // Check environments
+            let environments = config.get_environments().unwrap();
+            assert!(environments.len() >= 3); // Should have dev, sit, uat, prod
             
-            println!("Current config validation passed!");
-            println!("Host: {}", config.database.host);
-            println!("Username: {}", config.database.username);
-            println!("Database: {}", config.database.database);
-            println!("Masked URL: {}", masked_url);
+            // Check specific environments exist
+            assert!(config.get_environment("dev").is_some());
+            assert!(config.get_environment("sit").is_some());
+            assert!(config.get_environment("uat").is_some());
+            assert!(config.get_environment("prod").is_some());
+            
+            // Check default environment
+            assert_eq!(config.get_default_environment(), Some("dev"));
+            assert!(config.get_environment("dev").is_some());
+            
+            // Check enabled environments (prod should be disabled by default)
+            let enabled_envs = config.get_enabled_environments();
+            assert!(enabled_envs.contains(&"dev".to_string()));
+            assert!(enabled_envs.contains(&"sit".to_string()));
+            assert!(enabled_envs.contains(&"uat".to_string()));
+            assert!(!enabled_envs.contains(&"prod".to_string())); // Should be disabled
+            
+            // Validate each environment configuration
+            for (name, env) in environments {
+                assert_eq!(name, &env.name);
+                assert!(env.validate().is_ok());
+                
+                // Check connection URLs can be built
+                let url = env.connection_url();
+                assert!(url.starts_with("mysql://"));
+                
+                let masked_url = env.masked_connection_url();
+                assert!(masked_url.contains("****"));
+                assert!(!masked_url.contains(&env.database.password));
+            }
+            
+            println!("✅ Example multi-environment config validation passed!");
+        } else {
+            panic!("config.multi-env.example.toml file not found");
         }
     }
 }

@@ -1,0 +1,54 @@
+# Docker Compose Override Example
+# Copy this file to docker-compose.override.yml and customize as needed
+# This file will be automatically loaded by docker-compose
+
+version: '3.8'
+
+services:
+  mysql-mcp-server:
+    # Override environment variables
+    environment:
+      - RUST_LOG=debug  # Change log level
+      - MCP_DEFAULT_ENVIRONMENT=staging  # Change default environment
+    
+    # Add custom volumes
+    # volumes:
+    #   - ./custom-config.toml:/app/config.toml:ro
+    #   - ./logs:/app/logs
+    
+    # Override resource limits
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.0'
+    #       memory: 512M
+
+  # Override database configurations
+  mysql-dev:
+    environment:
+      - MYSQL_ROOT_PASSWORD=custom_dev_password
+      # - MYSQL_DATABASE=custom_dev_db
+    
+    # Add custom initialization scripts
+    # volumes:
+    #   - ./custom-init-dev.sql:/docker-entrypoint-initdb.d/custom-init.sql:ro
+
+  mysql-staging:
+    environment:
+      - MYSQL_ROOT_PASSWORD=custom_staging_password
+      # - MYSQL_DATABASE=custom_staging_db
+    
+    # Override port mapping if needed
+    # ports:
+    #   - "3307:3306"
+
+  # Add additional services if needed
+  # mysql-custom:
+  #   image: mysql:8.0
+  #   environment:
+  #     - MYSQL_ROOT_PASSWORD=custom_password
+  #     - MYSQL_DATABASE=custom_db
+  #   ports:
+  #     - "3309:3306"
+  #   networks:
+  #     - mcp-network

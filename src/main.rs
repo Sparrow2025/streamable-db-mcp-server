@@ -36,15 +36,49 @@ async fn main() -> Result<()> {
     info!("Configuration loaded successfully from config file");
     info!("Log level set to: {}", config.server.log_level);
     info!("Server will listen on port: {}", config.server.port);
-    info!("Database connection: {}", config.database.masked_connection_url());
-    info!("Connection timeout: {}s", config.database.connection_timeout);
-    info!("Max connections: {}", config.database.max_connections);
+    
+    // Log database configuration based on mode (legacy or multi-environment)
+    if config.is_multi_environment() {
+        info!("Multi-environment mode enabled");
+        if let Some(default_env) = config.get_default_environment() {
+            info!("Default environment: {}", default_env);
+        }
+        let enabled_envs = config.get_enabled_environments();
+        info!("Enabled environments: {}", enabled_envs.join(", "));
+        
+        // Log details for each enabled environment
+        if let Some(environments) = config.get_environments() {
+            for (env_name, env_config) in environments {
+                if env_config.enabled {
+                    info!("Environment '{}': {}", env_name, env_config.masked_connection_url());
+                    info!("Environment '{}' pool: max={}, min={}", 
+                        env_name, 
+                        env_config.connection_pool.max_connections,
+                        env_config.connection_pool.min_connections
+                    );
+                }
+            }
+        }
+    } else {
+        // Legacy single database mode
+        if let Some(db_config) = config.get_legacy_database() {
+            info!("Legacy single database mode");
+            info!("Database connection: {}", db_config.masked_connection_url());
+            info!("Connection timeout: {}s", db_config.connection_timeout);
+            info!("Max connections: {}", db_config.max_connections);
+        }
+    }
 
-    // Create connection configuration for backward compatibility
-    let connection_config = config.to_connection_config();
-
-    // Create the MCP server
-    let server = McpServer::new(connection_config);
+    // Create the MCP server based on configuration type
+    let server = if config.is_multi_environment() {
+        info!("Initializing server with multi-environment support");
+        McpServer::with_multi_environment(config.clone()).await?
+    } else {
+        info!("Initializing server with legacy single-database configuration");
+        // Create connection configuration for backward compatibility
+        let connection_config = config.to_connection_config();
+        McpServer::new(connection_config)
+    };
 
     // Set up graceful shutdown handling
     let shutdown_signal = setup_shutdown_signal();

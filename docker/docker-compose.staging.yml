@@ -1,0 +1,66 @@
+# Docker Compose for Staging Environment
+# This setup creates a staging environment for testing
+
+version: '3.8'
+
+services:
+  # MySQL MCP Server
+  mysql-mcp-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: mysql-mcp-server-staging
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.staging.docker.toml:/app/config.toml:ro
+    environment:
+      - RUST_LOG=info
+      - PORT=8080
+      - MCP_DEFAULT_ENVIRONMENT=staging
+      - MCP_LOG_LEVEL=info
+    depends_on:
+      mysql-staging:
+        condition: service_healthy
+    networks:
+      - mcp-staging-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Staging MySQL Database
+  mysql-staging:
+    image: mysql:8.0
+    container_name: mysql-mcp-staging
+    environment:
+      MYSQL_ROOT_PASSWORD: ${STAGING_MYSQL_ROOT_PASSWORD:-staging_root_password}
+      MYSQL_DATABASE: ${STAGING_MYSQL_DATABASE:-staging_database}
+      MYSQL_USER: ${STAGING_MYSQL_USER:-staging_user}
+      MYSQL_PASSWORD: ${STAGING_MYSQL_PASSWORD:-staging_password}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_staging_data:/var/lib/mysql
+      - ./mysql/init-staging.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - mcp-staging-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${STAGING_MYSQL_ROOT_PASSWORD:-staging_root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mysql_staging_data:
+    driver: local
+
+networks:
+  mcp-staging-network:
+    driver: bridge
+    name: mcp-staging-network

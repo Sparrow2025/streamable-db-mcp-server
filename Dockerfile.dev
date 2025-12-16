@@ -1,4 +1,4 @@
-# Development Dockerfile for MySQL MCP Server
+# Development Dockerfile for MySQL MCP Server with Multi-Environment Support
 FROM rust:latest
 
 # Install system dependencies
@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     ca-certificates \
     curl \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -16,15 +17,30 @@ WORKDIR /app
 RUN useradd -r -s /bin/false -m -d /home/mcp mcp && \
     chown -R mcp:mcp /app
 
+# Copy configuration templates for development
+COPY config.example.toml ./config.example.toml
+COPY config.multi-env.example.toml ./config.multi-env.example.toml
+COPY config.docker.example.toml ./config.docker.example.toml
+
 # Switch to non-root user
 USER mcp
 
 # Expose port
 EXPOSE 8080
 
-# Set environment variables
+# Set environment variables for development
 ENV RUST_LOG=debug
 ENV PORT=8080
+ENV CONFIG_FILE=/app/config.toml
+
+# Support for multi-environment configuration
+ENV MCP_DEFAULT_ENVIRONMENT=""
+ENV MCP_SERVER_PORT=""
+ENV MCP_LOG_LEVEL=""
+
+# Health check for development
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Default command (can be overridden)
 CMD ["cargo", "run", "--release"]
